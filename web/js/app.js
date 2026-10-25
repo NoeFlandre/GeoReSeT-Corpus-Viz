@@ -152,6 +152,11 @@ function render({ hits, hexes, tags }) {
   maxCount = Math.max(1, ...hexes.features.map((f) => f.properties.count));
   hexLayer.clearLayers().addData(hexes);
   outlineLayer.clearLayers();
+  map.closePopup();
+  if (hits.length) {
+    const bounds = L.latLngBounds(hits.map((h) => [h.lat, h.lon]));
+    map.fitBounds(bounds, { padding: [20, 20], maxZoom: HEX_MAX_ZOOM });
+  }
   $("legend").hidden = false;
   $("legend-max").textContent = maxCount;
   status(`${hits.length} lieux décrits par les ${meta.mapSentences} phrases les plus proches.`);
