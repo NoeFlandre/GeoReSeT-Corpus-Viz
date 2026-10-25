@@ -21,10 +21,12 @@ const status = (text) => ($("status").textContent = text);
 // Map ------------------------------------------------------------------------
 const map = L.map("map", { preferCanvas: true }).setView([45.55, 5.6], 8);
 const photo = L.tileLayer(IGN("ORTHOIMAGERY.ORTHOPHOTOS", "image/jpeg"), {
-  maxZoom: 19, attribution: ATTRIBUTION,
+  maxZoom: 19,
+  attribution: ATTRIBUTION,
 }).addTo(map);
 const plan = L.tileLayer(IGN("GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2", "image/png"), {
-  maxZoom: 19, attribution: ATTRIBUTION,
+  maxZoom: 19,
+  attribution: ATTRIBUTION,
 });
 L.control.layers({ "Orthophoto IGN": photo, "Plan IGN": plan }).addTo(map);
 
@@ -41,8 +43,15 @@ const legend = L.control({ position: "bottomleft" });
 legend.onAdd = () =>
   el("div", { className: "legend", hidden: true, id: "legend" }, [
     "Lieux trouvés par hexagone",
-    el("div", { className: "ramp" }, RAMP.map((c) => el("i", { style: `background:${c}` }))),
-    el("div", { className: "ends" }, [el("span", { textContent: "1" }), el("span", { id: "legend-max" })]),
+    el(
+      "div",
+      { className: "ramp" },
+      RAMP.map((c) => el("i", { style: `background:${c}` })),
+    ),
+    el("div", { className: "ends" }, [
+      el("span", { textContent: "1" }),
+      el("span", { id: "legend-max" }),
+    ]),
   ]);
 legend.addTo(map);
 
@@ -54,7 +63,9 @@ function hexStyle(feature) {
 
 function bindHex(feature, layer) {
   const { count, score } = feature.properties;
-  layer.bindTooltip(`${count} lieu${count > 1 ? "x" : ""} · meilleur score ${score.toFixed(2)}`, { sticky: true });
+  layer.bindTooltip(`${count} lieu${count > 1 ? "x" : ""} · meilleur score ${score.toFixed(2)}`, {
+    sticky: true,
+  });
   layer.on("click", () => map.fitBounds(layer.getBounds(), { maxZoom: 13 }));
 }
 
@@ -68,43 +79,59 @@ const file = (name) => `data/${meta.files[name]}`;
 const loadJSON = async (name) => readJSON(await fetchOk(file(name)));
 
 const meta = await readJSON(await fetchOk("data/meta.json"));
-const [vectors, sentences, polygons, cells, examples] = await Promise.all([
-  fetchOk(file("vectors")).then(readInt8),
-  loadJSON("sentences"),
-  loadJSON("polygons"),
-  loadJSON("cells"),
-  loadJSON("examples"),
-]);
-let geometries; // outlines load on the first click only
-const exampleVectors = new Map(examples.queries.map((q, i) => [q, Float32Array.from(examples.vectors[i])]));
+const [sentences, polygons, cells, examples] = await Promise.all(
+  ["sentences", "polygons", "cells", "examples"].map(loadJSON),
+);
+let geometries; // outlines load on the first click
+let vectors; // vectors and model load only for typed queries; examples come pre-ranked
+const loadVectors = () => (vectors ??= fetchOk(file("vectors")).then(readInt8));
 const cache = new Map();
 
-async function queryVector(query) {
-  if (exampleVectors.has(query)) return exampleVectors.get(query);
-  status("Chargement du modèle (une seule fois, environ 130 Mo)…");
-  return embedQuery(meta.model, query);
+async function rank(query) {
+  const example = examples.queries.indexOf(query);
+  if (example >= 0) return { rows: examples.rows[example], scores: examples.scores[example] };
+  status("Chargement du modèle et des vecteurs (une seule fois, environ 150 Mo)…");
+  const [vector, all] = await Promise.all([embedQuery(meta.model, query), loadVectors()]);
+  return topK(scores(all, meta.dims, vector), meta.mapSentences);
 }
 
 function hit({ row, score }) {
   const p = sentences.polygon[row];
   return {
-    polygon: polygons.id[p], name: polygons.name[p], tag: polygons.tag[p],
-    lat: polygons.lat[p], lon: polygons.lon[p], cell: polygons.cell[p], index: p,
-    score, text: sentences.text[row], source: sentences.source[row], url: sentences.url[row],
+    polygon: polygons.id[p],
+    name: polygons.name[p],
+    tag: polygons.tag[p],
+    lat: polygons.lat[p],
+    lon: polygons.lon[p],
+    cell: polygons.cell[p],
+    index: p,
+    score,
+    text: sentences.text[row],
+    source: sentences.source[row],
+    url: sentences.url[row],
   };
 }
 
 function hexFeatures(hits) {
   const features = [...hexCounts(hits)].map(([cell, properties]) => ({
-    type: "Feature", properties, geometry: { type: "Polygon", coordinates: [cells[cell]] },
+    type: "Feature",
+    properties,
+    geometry: { type: "Polygon", coordinates: [cells[cell]] },
   }));
   return { type: "FeatureCollection", features };
 }
 
 async function run(query) {
-  const values = scores(vectors, meta.dims, await queryVector(query));
-  const hits = bestPerPolygon(topK(values, meta.mapSentences), values, sentences.polygon).map(hit);
-  return { hits, hexes: hexFeatures(hits), tags: countBy(hits.map((h) => h.tag), meta.topTags) };
+  const { rows, scores: rowScores } = await rank(query);
+  const hits = bestPerPolygon(rows, rowScores, sentences.polygon).map(hit);
+  return {
+    hits,
+    hexes: hexFeatures(hits),
+    tags: countBy(
+      hits.map((h) => h.tag),
+      meta.topTags,
+    ),
+  };
 }
 
 async function search(query) {
@@ -158,7 +185,11 @@ function renderResults(results) {
       el("q", { textContent: r.text }),
     ]);
     const marker = L.circleMarker([r.lat, r.lon], {
-      radius: 6, color: "#fff", weight: 2, fillColor: "#eb6834", fillOpacity: 1,
+      radius: 6,
+      color: "#fff",
+      weight: 2,
+      fillColor: "#eb6834",
+      fillOpacity: 1,
     }).addTo(markerLayer);
     const open = () => focus(r, item);
     marker.on("click", open);
@@ -170,13 +201,16 @@ function renderResults(results) {
 }
 
 function popup(r) {
-  const link = (href, textContent) => el("a", { href, target: "_blank", rel: "noopener", textContent });
+  const link = (href, textContent) =>
+    el("a", { href, target: "_blank", rel: "noopener", textContent });
   return el("div", {}, [
     el("strong", { textContent: r.name ?? "Sans nom" }),
     el("div", { className: "meta", textContent: r.tag ?? "" }),
     el("q", { textContent: r.text }),
     el("div", {}, [
-      link(r.url, `Source (${r.source})`), " · ", link(`https://www.openstreetmap.org/${r.polygon}`, "OSM"),
+      link(r.url, `Source (${r.source})`),
+      " · ",
+      link(`https://www.openstreetmap.org/${r.polygon}`, "OSM"),
     ]),
   ]);
 }
@@ -196,12 +230,22 @@ async function focus(r, item) {
 
 // Wiring ---------------------------------------------------------------------
 $("examples").replaceChildren(
-  ...examples.queries.map((q) => el("button", { type: "button", textContent: q, onclick: () => search(q) })),
+  ...examples.queries.map((q) =>
+    el("button", { type: "button", textContent: q, onclick: () => search(q) }),
+  ),
 );
 $("search").addEventListener("submit", (event) => {
   event.preventDefault();
   search($("q").value);
 });
-$("q").addEventListener("focus", () => loadModel(meta.model), { once: true });
+$("q").addEventListener(
+  "focus",
+  () => Promise.all([loadModel(meta.model), loadVectors()]).catch(() => {}),
+  {
+    once: true,
+  },
+);
 $("search-button").disabled = false;
-status(`${meta.count.toLocaleString("fr")} phrases prêtes. Tapez une description ou choisissez un exemple.`);
+status(
+  `${meta.count.toLocaleString("fr")} phrases. Choisissez un exemple ou tapez une description.`,
+);

@@ -12,7 +12,7 @@ from georeset_viz.build.extract import extract
 from georeset_viz.build.geometry import simplified_geojson
 from georeset_viz.hexes import hex_cell, hex_ring
 from georeset_viz.store import write_json
-from georeset_viz.vectors import write_vectors
+from georeset_viz.vectors import quantize, top_rows, write_vectors
 
 BatchEncoder = Callable[[list[str], str], np.ndarray]
 HF_ROOT = f"hf://datasets/{config.DATASET}"
@@ -26,28 +26,40 @@ FILES = {
 }
 
 
+def _index(values: list[str]) -> tuple[list[str], list[int]]:
+    """Distinct values in first-seen order, and the position of each value among them."""
+    distinct = list(dict.fromkeys(values))
+    position = dict(zip(distinct, range(len(distinct)), strict=True))
+    return distinct, list(map(position.__getitem__, values))
+
+
 def _write_polygons(out_dir: Path, rows: list[tuple]) -> dict[str, int]:
-    ids, names, tags, lats, lons, wkbs = (list(column) for column in zip(*rows, strict=True))
-    cell_ids = [hex_cell(lat, lon) for lat, lon in zip(lats, lons, strict=True)]
-    cells = list(dict.fromkeys(cell_ids))
-    position = {cell: i for i, cell in enumerate(cells)}
+    ids, names, tags, lats, lons, wkbs = map(list, zip(*rows, strict=True))
+    cells, cell_of = _index(list(map(hex_cell, lats, lons)))
     columns = {
         "id": ids,
         "name": names,
         "tag": tags,
-        "lat": [round(v, 5) for v in lats],
-        "lon": [round(v, 5) for v in lons],
-        "cell": [position[c] for c in cell_ids],
+        "lat": np.round(lats, 5).tolist(),
+        "lon": np.round(lons, 5).tolist(),
+        "cell": cell_of,
     }
     write_json(out_dir / FILES["polygons"], columns)
-    write_json(out_dir / FILES["cells"], [hex_ring(c) for c in cells])
-    write_json(out_dir / FILES["geometries"], [simplified_geojson(w) for w in wkbs])
-    return {pid: i for i, pid in enumerate(ids)}
+    write_json(out_dir / FILES["cells"], list(map(hex_ring, cells)))
+    write_json(out_dir / FILES["geometries"], list(map(simplified_geojson, wkbs)))
+    return dict(zip(ids, range(len(ids)), strict=True))
 
 
-def _write_examples(out_dir: Path, encode: BatchEncoder) -> None:
-    vectors = np.round(encode(config.EXAMPLES, "query"), 5).tolist()
-    examples = {"queries": config.EXAMPLES, "vectors": vectors}
+def _write_examples(out_dir: Path, encode: BatchEncoder, quantized: np.ndarray) -> None:
+    """Pre-rank the example queries so the page answers them without vectors or model."""
+    ranked = [
+        top_rows(quantized, q, config.MAP_SENTENCES) for q in encode(config.EXAMPLES, "query")
+    ]
+    examples = {
+        "queries": config.EXAMPLES,
+        "rows": [rows for rows, _ in ranked],
+        "scores": [scores for _, scores in ranked],
+    }
     (out_dir / FILES["examples"]).write_text(json.dumps(examples, ensure_ascii=False))
 
 
@@ -63,9 +75,9 @@ def build(
     position = _write_polygons(out_dir, polygons)
     sentences["polygon"] = [position[p] for p in sentences["polygon"]]
     write_json(out_dir / FILES["sentences"], sentences)
-    vectors = encode(sentences["text"], "passage")
+    vectors = quantize(encode(sentences["text"], "passage"))
     write_vectors(out_dir / FILES["vectors"], vectors)
-    _write_examples(out_dir, encode)
+    _write_examples(out_dir, encode, vectors)
     meta = {"count": len(vectors), "dims": vectors.shape[1], "files": FILES}
     (out_dir / "meta.json").write_text(json.dumps(meta | config.BROWSER_SETTINGS))
 

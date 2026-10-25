@@ -10,19 +10,30 @@ export function scores(vectors, dims, query) {
   return out;
 }
 
+// Insertion into a sorted buffer of k: one pass, no full sort (k is small).
 export function topK(values, k) {
   const n = Math.min(k, values.length);
-  const threshold = Float32Array.from(values).sort()[values.length - n];
-  const rows = [];
-  for (let i = 0; i < values.length; i++) if (values[i] >= threshold) rows.push(i);
-  return rows.sort((a, b) => values[b] - values[a]).slice(0, n);
+  const rows = new Int32Array(n);
+  const best = new Float64Array(n).fill(-Infinity);
+  for (let i = 0; i < values.length; i++) {
+    const x = values[i];
+    if (x <= best[n - 1]) continue;
+    let j = n - 1;
+    for (; j > 0 && best[j - 1] < x; j--) {
+      best[j] = best[j - 1];
+      rows[j] = rows[j - 1];
+    }
+    best[j] = x;
+    rows[j] = i;
+  }
+  return { rows: Array.from(rows), scores: Array.from(best) };
 }
 
-export function bestPerPolygon(rows, values, polygonOf) {
+export function bestPerPolygon(rows, rowScores, polygonOf) {
   const seen = new Set();
   return rows
-    .filter((row) => !seen.has(polygonOf[row]) && seen.add(polygonOf[row]))
-    .map((row) => ({ row, score: values[row] }));
+    .map((row, i) => ({ row, score: rowScores[i] }))
+    .filter(({ row }) => !seen.has(polygonOf[row]) && seen.add(polygonOf[row]));
 }
 
 export function countBy(keys, top) {

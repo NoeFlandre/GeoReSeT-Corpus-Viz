@@ -30,10 +30,12 @@ EXAMPLES = [
     "marais asséché",
 ]
 
+MAP_SENTENCES = 300
+
 # Read by the page (web/js/app.js) through meta.json.
 BROWSER_SETTINGS = {
     "model": MODEL_REPO,
-    "mapSentences": 300,
+    "mapSentences": MAP_SENTENCES,
     "listSize": 30,
     "topTags": 8,
 }

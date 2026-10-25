@@ -1,5 +1,9 @@
 {
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test --experimental-test-coverage \"web/tests/*.test.js\"" }
+  "scripts": {
+    "test": "node --test --experimental-test-coverage \"web/tests/*.test.js\"",
+    "format": "npx --yes prettier@3.3.3 --write web/js web/tests",
+    "lint": "npx --yes prettier@3.3.3 --check web/js web/tests"
+  }
 }

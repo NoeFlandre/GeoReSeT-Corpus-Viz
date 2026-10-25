@@ -114,4 +114,5 @@ def test_build_writes_int8_vectors_and_example_queries(site):
     assert vectors.tolist() == [76, 102] * 3
     examples = json.loads((site / meta["files"]["examples"]).read_text())
     assert examples["queries"] == config.EXAMPLES
-    assert examples["vectors"][0] == [1.0, 0.0]
+    assert examples["rows"][0] == [0, 1, 2]
+    assert examples["scores"][0] == [0.5984] * 3
