@@ -1,4 +1,4 @@
-"""Settings shared by the offline build and the web app."""
+"""Settings for the offline build; the browser reads its share from meta.json."""
 
 from pathlib import Path
 
@@ -15,13 +15,28 @@ MIN_CHARS = 40
 MAX_CHARS = 300
 MAX_SENTENCES_PER_POLYGON = 20
 SIMPLIFY_DEGREES = 0.00005  # about 5 m
+HEX_RESOLUTION = 6
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-SENTENCES_FILE = "sentences.json.gz"
-VECTORS_FILE = "vectors.npy"
-POLYGONS_FILE = "polygons.json.gz"
+EXAMPLES = [
+    "glacier en recul",
+    "lac de barrage",
+    "friche industrielle",
+    "éboulement",
+    "ancienne carrière",
+    "tourbière drainée",
+    "domaine skiable",
+    "vignoble en coteaux",
+    "zone inondable",
+    "marais asséché",
+]
 
-MAP_SENTENCES = 2000
-LIST_SIZE = 30
-HEX_RESOLUTION = 7
-TOP_TAGS = 8
+# Read by the page (web/js/app.js) through meta.json.
+BROWSER_SETTINGS = {
+    "model": MODEL_REPO,
+    "mapSentences": 300,
+    "listSize": 30,
+    "topTags": 8,
+}
+
+WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+DATA_DIR = WEB_DIR / "data"

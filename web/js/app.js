@@ -1,11 +1,9 @@
-"use strict";
+import { readInt8, readJSON } from "./data.js";
+import { embedQuery, loadModel } from "./embed.js";
+import { bestPerPolygon, countBy, hexCounts, scores, topK } from "./search.js";
 
-const EXAMPLES = [
-  "tourbière drainée", "vignes en terrasses", "glacier en recul", "ancienne carrière",
-  "zone inondable", "forêt de résineux", "friche industrielle", "alpage pâturé",
-  "lac de barrage", "vergers et noyers",
-];
 const RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
+const HEX_MAX_ZOOM = 11; // closer in, hexes would hide the imagery the text is compared with
 const IGN = (layer, format) =>
   "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&STYLE=normal" +
   `&TILEMATRIXSET=PM&LAYER=${layer}&FORMAT=${format}&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}`;
@@ -18,9 +16,10 @@ const el = (tag, props = {}, children = []) => {
   node.append(...children);
   return node;
 };
+const status = (text) => ($("status").textContent = text);
 
 // Map ------------------------------------------------------------------------
-const map = L.map("map", { preferCanvas: true, zoomControl: true }).setView([45.55, 5.6], 8);
+const map = L.map("map", { preferCanvas: true }).setView([45.55, 5.6], 8);
 const photo = L.tileLayer(IGN("ORTHOIMAGERY.ORTHOPHOTOS", "image/jpeg"), {
   maxZoom: 19, attribution: ATTRIBUTION,
 }).addTo(map);
@@ -29,10 +28,14 @@ const plan = L.tileLayer(IGN("GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2", "image/png"), 
 });
 L.control.layers({ "Orthophoto IGN": photo, "Plan IGN": plan }).addTo(map);
 
+let maxCount = 1;
 const hexLayer = L.geoJSON(null, { style: hexStyle, onEachFeature: bindHex }).addTo(map);
 const markerLayer = L.layerGroup().addTo(map);
 const outlineLayer = L.layerGroup().addTo(map);
-let maxCount = 1;
+map.on("zoomend", () => {
+  const show = map.getZoom() <= HEX_MAX_ZOOM;
+  if (show !== map.hasLayer(hexLayer)) show ? hexLayer.addTo(map) : hexLayer.remove();
+});
 
 const legend = L.control({ position: "bottomleft" });
 legend.onAdd = () =>
@@ -45,7 +48,7 @@ legend.addTo(map);
 
 function hexStyle(feature) {
   const t = Math.log1p(feature.properties.count) / Math.log1p(maxCount);
-  const color = RAMP[Math.min(RAMP.length - 1, Math.round(t * (RAMP.length - 1)))];
+  const color = RAMP[Math.round(t * (RAMP.length - 1))];
   return { fillColor: color, fillOpacity: 0.7, color: "#fff", weight: 0.6 };
 }
 
@@ -56,43 +59,77 @@ function bindHex(feature, layer) {
 }
 
 // Data -----------------------------------------------------------------------
-const cache = new Map();
-let pendingSearch;
+const fetchOk = async (url) => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${url} : ${response.status}`);
+  return response;
+};
+const file = (name) => `data/${meta.files[name]}`;
+const loadJSON = async (name) => readJSON(await fetchOk(file(name)));
 
-async function getJSON(url, signal) {
-  if (cache.has(url)) return cache.get(url);
-  const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(response.statusText);
-  const body = await response.json();
-  cache.set(url, body);
-  return body;
+const meta = await readJSON(await fetchOk("data/meta.json"));
+const [vectors, sentences, polygons, cells, examples] = await Promise.all([
+  fetchOk(file("vectors")).then(readInt8),
+  loadJSON("sentences"),
+  loadJSON("polygons"),
+  loadJSON("cells"),
+  loadJSON("examples"),
+]);
+let geometries; // outlines load on the first click only
+const exampleVectors = new Map(examples.queries.map((q, i) => [q, Float32Array.from(examples.vectors[i])]));
+const cache = new Map();
+
+async function queryVector(query) {
+  if (exampleVectors.has(query)) return exampleVectors.get(query);
+  status("Chargement du modèle (une seule fois, environ 130 Mo)…");
+  return embedQuery(meta.model, query);
+}
+
+function hit({ row, score }) {
+  const p = sentences.polygon[row];
+  return {
+    polygon: polygons.id[p], name: polygons.name[p], tag: polygons.tag[p],
+    lat: polygons.lat[p], lon: polygons.lon[p], cell: polygons.cell[p], index: p,
+    score, text: sentences.text[row], source: sentences.source[row], url: sentences.url[row],
+  };
+}
+
+function hexFeatures(hits) {
+  const features = [...hexCounts(hits)].map(([cell, properties]) => ({
+    type: "Feature", properties, geometry: { type: "Polygon", coordinates: [cells[cell]] },
+  }));
+  return { type: "FeatureCollection", features };
+}
+
+async function run(query) {
+  const values = scores(vectors, meta.dims, await queryVector(query));
+  const hits = bestPerPolygon(topK(values, meta.mapSentences), values, sentences.polygon).map(hit);
+  return { hits, hexes: hexFeatures(hits), tags: countBy(hits.map((h) => h.tag), meta.topTags) };
 }
 
 async function search(query) {
   query = query.trim();
   if (!query) return;
   $("q").value = query;
-  $("status").textContent = "Recherche…";
+  status("Recherche…");
   try {
-    pendingSearch?.abort();
-    pendingSearch = new AbortController();
-    render(await getJSON(`/api/search?q=${encodeURIComponent(query)}`, pendingSearch.signal));
+    if (!cache.has(query)) cache.set(query, await run(query));
+    render(cache.get(query));
   } catch (error) {
-    if (error.name !== "AbortError") $("status").textContent = `Erreur : ${error.message}`;
+    status(`Erreur : ${error.message}`);
   }
 }
 
 // Rendering ------------------------------------------------------------------
-function render({ results, hexes, tags }) {
+function render({ hits, hexes, tags }) {
   maxCount = Math.max(1, ...hexes.features.map((f) => f.properties.count));
-  const places = hexes.features.reduce((n, f) => n + f.properties.count, 0);
   hexLayer.clearLayers().addData(hexes);
   outlineLayer.clearLayers();
   $("legend").hidden = false;
   $("legend-max").textContent = maxCount;
-  $("status").textContent = `${places} lieux décrits par les phrases les plus proches.`;
+  status(`${hits.length} lieux décrits par les ${meta.mapSentences} phrases les plus proches.`);
   renderTags(tags);
-  renderResults(results);
+  renderResults(hits.slice(0, meta.listSize));
 }
 
 function renderTags(tags) {
@@ -132,19 +169,14 @@ function renderResults(results) {
   $("results-section").hidden = results.length === 0;
 }
 
-function osmLink(polygon) {
-  return `https://www.openstreetmap.org/${polygon}`;
-}
-
 function popup(r) {
+  const link = (href, textContent) => el("a", { href, target: "_blank", rel: "noopener", textContent });
   return el("div", {}, [
     el("strong", { textContent: r.name ?? "Sans nom" }),
     el("div", { className: "meta", textContent: r.tag ?? "" }),
     el("q", { textContent: r.text }),
     el("div", {}, [
-      el("a", { href: r.url, target: "_blank", rel: "noopener", textContent: `Source (${r.source})` }),
-      " · ",
-      el("a", { href: osmLink(r.polygon), target: "_blank", rel: "noopener", textContent: "OSM" }),
+      link(r.url, `Source (${r.source})`), " · ", link(`https://www.openstreetmap.org/${r.polygon}`, "OSM"),
     ]),
   ]);
 }
@@ -154,22 +186,22 @@ async function focus(r, item) {
   item.classList.add("active");
   outlineLayer.clearLayers();
   const point = L.latLng(r.lat, r.lon);
-  try {
-    const shape = L.geoJSON(await getJSON(`/api/polygon?id=${encodeURIComponent(r.polygon)}`), {
-      style: { color: "#ffd400", weight: 3, fill: false },
-    }).addTo(outlineLayer);
-    map.fitBounds(shape.getBounds(), { maxZoom: 18, padding: [40, 40] });
-  } catch {
-    map.setView(point, 16);
-  }
   L.popup({ maxWidth: 320 }).setLatLng(point).setContent(popup(r)).openOn(map);
+  geometries ??= loadJSON("geometries");
+  const shape = L.geoJSON((await geometries)[r.index], {
+    style: { color: "#ffd400", weight: 3, fill: false },
+  }).addTo(outlineLayer);
+  map.fitBounds(shape.getBounds(), { maxZoom: 18, padding: [40, 40] });
 }
 
 // Wiring ---------------------------------------------------------------------
 $("examples").replaceChildren(
-  ...EXAMPLES.map((q) => el("button", { type: "button", textContent: q, onclick: () => search(q) })),
+  ...examples.queries.map((q) => el("button", { type: "button", textContent: q, onclick: () => search(q) })),
 );
 $("search").addEventListener("submit", (event) => {
   event.preventDefault();
   search($("q").value);
 });
+$("q").addEventListener("focus", () => loadModel(meta.model), { once: true });
+$("search-button").disabled = false;
+status(`${meta.count.toLocaleString("fr")} phrases prêtes. Tapez une description ou choisissez un exemple.`);

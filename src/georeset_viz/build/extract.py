@@ -22,7 +22,7 @@ SELECT text, source, url, polygon FROM ranked WHERE rank <= $cap ORDER BY polygo
 """
 
 POLYGONS_SQL = """
-SELECT polygon_id, name, osm_tag, lat, lon, area_m2, geometry::BLOB
+SELECT polygon_id, name, osm_tag, lat, lon, geometry::BLOB
 FROM read_parquet($glob)
 WHERE region = $region AND polygon_id IN (SELECT polygon FROM sentences)
 ORDER BY polygon_id

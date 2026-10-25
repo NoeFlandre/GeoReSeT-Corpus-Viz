@@ -52,12 +52,13 @@ input {
   flex: 1; min-width: 0; padding: 9px 12px; font: inherit; color: inherit;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
 }
+button:disabled { opacity: .5; cursor: wait; }
 button {
   padding: 9px 16px; font: inherit; font-weight: 600; color: #fff;
   background: var(--accent); border: 0; border-radius: 8px; cursor: pointer;
 }
 #examples { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
-#examples button {
+button {
   padding: 3px 10px; font-weight: 400; font-size: 13px; color: var(--text);
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
 }

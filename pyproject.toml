@@ -1,36 +1,28 @@
 [project]
 name = "georeset-viz"
 version = "0.1.0"
-description = "Semantic search map over GeoReSeT land-use sentences (Rhône-Alpes, French)"
+description = "Builds the static GeoReSeT text atlas (Rhône-Alpes, French land-use sentences)"
 readme = "README.md"
 authors = [{ name = "Noé Flandre", email = "noe.flandre@inria.fr" }]
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.115",
+    "duckdb>=1.1",
     "h3>=4.1",
     "huggingface-hub>=0.26",
     "numpy>=2.0",
     "onnxruntime>=1.20",
+    "shapely>=2.0",
     "tokenizers>=0.20",
-    "uvicorn>=0.32",
 ]
-
-[project.scripts]
-georeset-viz = "georeset_viz.app:main"
 
 [dependency-groups]
 dev = [
     "coverage>=7.6",
-    "httpx>=0.28",
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "radon>=6.0",
     "ruff>=0.8",
     "ty>=0.0.1a1",
-]
-build = [
-    "duckdb>=1.1",
-    "shapely>=2.0",
 ]
 
 [build-system]

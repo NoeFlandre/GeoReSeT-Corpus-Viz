@@ -6,6 +6,7 @@
   <title>Atlas textuel Rhône-Alpes</title>
   <meta name="description" content="Cherchez un paysage en mots : recherche sémantique des phrases GeoReSeT liées aux polygones OpenStreetMap, sur fond d'orthophotos IGN.">
   <link rel="preconnect" href="https://data.geopf.fr">
+  <link rel="preload" href="data/vectors.i8.gz" as="fetch" crossorigin>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -17,15 +18,15 @@
     </div>
     <form id="search" role="search">
       <input id="q" name="q" type="search" maxlength="200" autocomplete="off"
-             placeholder="Décrivez un paysage : « tourbière drainée », « vignes en terrasses »…" aria-label="Requête">
-      <button type="submit">Chercher</button>
+             placeholder="Décrivez un paysage : « tourbière drainée », « glacier en recul »…" aria-label="Requête">
+      <button id="search-button" type="submit" disabled>Chercher</button>
     </form>
     <div id="examples" aria-label="Exemples"></div>
   </header>
   <main>
     <div id="map" aria-label="Carte"></div>
     <aside>
-      <p id="status">Tapez une description ou choisissez un exemple.</p>
+      <p id="status">Chargement des phrases…</p>
       <section id="tags-section" hidden>
         <h2>Tags OSM des lieux trouvés</h2>
         <div id="tags"></div>
@@ -37,11 +38,11 @@
       <footer>
         Phrases : <a href="https://huggingface.co/datasets/NoeFlandre/GeoReSeT-Corpus" target="_blank" rel="noopener">GeoReSeT Corpus</a>
         (français, étiquetées « occupation du sol »). Modèle : multilingual-e5-small.
-        Images : IGN Géoplateforme.
+        Recherche exacte dans votre navigateur. Images : IGN Géoplateforme.
       </footer>
     </aside>
   </main>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="app.js"></script>
+  <script type="module" src="js/app.js"></script>
 </body>
 </html>

@@ -1,3 +1,6 @@
+import gzip
+import json
+
 import duckdb
 import numpy as np
 import pytest
@@ -73,16 +76,42 @@ def test_simplified_geojson_drops_redundant_vertices():
     assert len(geojson["coordinates"][0]) == 5
 
 
-def test_build_writes_app_data(parquet, tmp_path):
-    def encode(texts, prefix):
-        assert prefix == "passage"
-        return np.tile([0.6, 0.8], (len(texts), 1))
+def fake_encode(texts, prefix):
+    return np.tile([0.6, 0.8] if prefix == "passage" else [1.0, 0.0], (len(texts), 1))
 
-    build(tmp_path, duckdb.connect(), encode, *parquet)
-    sentences = read_json(tmp_path / config.SENTENCES_FILE)
-    polygons = read_json(tmp_path / config.POLYGONS_FILE)
-    vectors = np.load(tmp_path / config.VECTORS_FILE)
-    assert len(sentences["text"]) == 3 == len(vectors)
-    assert vectors.dtype == np.int8
-    assert set(polygons) == {"way/1", "way/2"}
-    assert polygons["way/1"]["tag"] == "natural=water"
+
+@pytest.fixture
+def site(parquet, tmp_path):
+    out = tmp_path / "site"
+    build(out, duckdb.connect(), fake_encode, *parquet)
+    return out
+
+
+def test_build_writes_meta_pointing_to_every_file(site):
+    meta = json.loads((site / "meta.json").read_text())
+    assert meta["count"] == 3 and meta["dims"] == 2
+    assert meta["mapSentences"] == config.BROWSER_SETTINGS["mapSentences"]
+    assert all((site / name).exists() for name in meta["files"].values())
+
+
+def test_build_links_sentences_to_polygons_and_cells(site):
+    meta = json.loads((site / "meta.json").read_text())
+    sentences = read_json(site / meta["files"]["sentences"])
+    polygons = read_json(site / meta["files"]["polygons"])
+    cells = read_json(site / meta["files"]["cells"])
+    geometries = read_json(site / meta["files"]["geometries"])
+    assert polygons["id"] == ["way/1", "way/2"] and polygons["tag"][0] == "natural=water"
+    assert [polygons["id"][i] for i in sentences["polygon"]] == ["way/1", "way/1", "way/2"]
+    assert polygons["cell"] == [0, 0] and len(cells) == 1 and len(cells[0]) == 7
+    assert [g["type"] for g in geometries] == ["Polygon", "Polygon"]
+
+
+def test_build_writes_int8_vectors_and_example_queries(site):
+    meta = json.loads((site / "meta.json").read_text())
+    vectors = np.frombuffer(
+        gzip.decompress((site / meta["files"]["vectors"]).read_bytes()), np.int8
+    )
+    assert vectors.tolist() == [76, 102] * 3
+    examples = json.loads((site / meta["files"]["examples"]).read_text())
+    assert examples["queries"] == config.EXAMPLES
+    assert examples["vectors"][0] == [1.0, 0.0]
